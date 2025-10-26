@@ -1,0 +1,281 @@
+Build a complete, responsive website called Steam Family. This site shares useful third-party gaming and Steam tools. The Privacy Policy and Terms of Service must clearly state:
+“This site hosts links to 3rd-party software and tools.”
+
+High-level requirements (must implement)
+
+Use Supabase (free tier) for Authentication and database.
+
+Frontend: React (or plain HTML/JS) that builds to static assets compatible with GitHub Pages.
+
+Provide a comprehensive README.md with setup, deployment, and a detailed “Possible Errors & Fixes” section (see below).
+
+Deliver full project scaffold (frontend + Supabase SQL snippets + optional minimal serverless functions) and a README testing checklist.
+
+Core features — functional details
+Authentication & user model
+
+Use Supabase Auth for signup/login.
+
+users table (profile) must be created and synced with auth.users.
+
+users columns: id (auth.users.id), username, email, is_admin (boolean), created_at.
+
+On first signup or login, ensure the app upserts a matching row into public.users.
+
+README must include the SQL snippet to promote a user to admin:
+
+UPDATE users SET is_admin = true WHERE id = '<USER_ID>';
+
+Admin panel (no code needed to post)
+
+Admin dashboard UI where admins can create/edit/delete tool posts using forms (no direct DB edits required).
+
+Admin-only features: upload image URLs (or upload to storage), add tags, Markdown description (preview), add multiple download buttons (label + URL), optional donation & Telegram links, manage reviews and view stats.
+
+Admin panel must be hidden from non-admins in UI and protected server-side (see "Server-side security" below).
+
+Tools pages & UX
+
+Tool detail page shows:
+
+Title, rendered Markdown description, image gallery, tags.
+
+One or more download buttons (label + URL).
+
+Donate and Telegram buttons (icons, not emojis).
+
+Authenticated downloads tracked server-side (see downloads).
+
+Reviews: only registered users can post; stored in Supabase (real reviews).
+
+Average rating and list of reviews with username and date.
+
+Session-only popups on tool pages: Donate and Telegram — each shown once per browser session (use sessionStorage).
+
+Download tracking & reviews
+
+downloads table must record: id, user_id, tool_id, button_label, downloaded_at.
+
+Download counters must be computed from downloads table (or updated transactionally server-side).
+
+reviews enforced with UNIQUE(user_id, tool_id) constraint; rating 1–5; min length 10 chars.
+
+UI / Theming
+
+Black background, red accents, white text; responsive and mobile-first.
+
+Use icon library (e.g., Font Awesome or Heroicons) — no emojis.
+
+Accessible markup, meta tags for social sharing.
+
+Server-side security & behavior (must implement)
+
+Do not rely on client checks alone to show/hide admin features. Protect admin routes server-side.
+
+For any admin API (/api/admin/*):
+
+Validate the Authorization header token.
+
+Use supabase.auth.getUser(token) in your server or serverless function to obtain the calling user.
+
+Then check public.users where users.id = auth.uid() and is_admin = true.
+
+If not admin -> return 401 or 403 (consistent JSON error).
+
+Provide an @admin_required middleware (or wrapper) for admin routes.
+
+Example server-side check (Node/Express style):
+
+const token = req.headers.authorization?.replace('Bearer ', '');
+const { data: { user }, error } = await supabase.auth.getUser(token);
+if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+const { data: profile } = await supabase.from('users').select('is_admin').eq('id', user.id).single();
+if (!profile || !profile.is_admin) return res.status(403).json({ error: 'Forbidden' });
+
+// proceed
+
+DB schema (include in README SQL snippets)
+
+Provide SQL for Supabase to create these tables (example column names/types). Make sure to enable RLS and include the policies below.
+
+users — id (uuid auth.users.id), username, email, is_admin boolean, created_at
+
+tools — id uuid, title, slug, short_desc, description_markdown, images text[], tags text[], donation_url, telegram_url, created_at, updated_at
+
+download_buttons — id, tool_id, label, url, order
+
+downloads — id, user_id, tool_id, button_label, downloaded_at
+
+reviews — id, user_id, tool_id, rating int check, review_text text, created_at, unique(user_id, tool_id)
+
+REQUIRED RLS policies & SQL guidance (must be included EXACTLY in README)
+
+Include the following SQL snippets in README with explanation and where to paste in Supabase SQL editor. These prevent the exact issues we faced.
+
+Enable RLS
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tools ENABLE ROW LEVEL SECURITY;
+ALTER TABLE download_buttons ENABLE ROW LEVEL SECURITY;
+ALTER TABLE downloads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reviews ENABLE ROW LEVEL SECURITY;
+
+Users (simple own-row policy)
+CREATE POLICY "Users: select public" ON users FOR SELECT USING (true);
+
+CREATE POLICY "Users: insert their own" ON users FOR INSERT
+TO authenticated
+WITH CHECK (auth.uid() = id);
+
+CREATE POLICY "Users: update own" ON users FOR UPDATE
+TO authenticated
+USING (auth.uid() = id)
+WITH CHECK (auth.uid() = id);
+
+Tools — public read, admin manage (exact)
+CREATE POLICY "Tools: public select" ON tools FOR SELECT USING (true);
+
+CREATE POLICY "Tools: admins insert" ON tools FOR INSERT
+TO authenticated
+WITH CHECK (
+  EXISTS (SELECT 1 FROM users WHERE users.id = auth.uid() AND users.is_admin = true)
+);
+
+CREATE POLICY "Tools: admins update" ON tools FOR UPDATE
+TO authenticated
+USING (
+  EXISTS (SELECT 1 FROM users WHERE users.id = auth.uid() AND users.is_admin = true)
+)
+WITH CHECK (
+  EXISTS (SELECT 1 FROM users WHERE users.id = auth.uid() AND users.is_admin = true)
+);
+
+CREATE POLICY "Tools: admins delete" ON tools FOR DELETE
+TO authenticated
+USING (
+  EXISTS (SELECT 1 FROM users WHERE users.id = auth.uid() AND users.is_admin = true)
+);
+
+Downloads & Reviews (examples)
+CREATE POLICY "Downloads: insert own" ON downloads FOR INSERT
+TO authenticated
+WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Downloads: select own or admin" ON downloads FOR SELECT
+TO authenticated
+USING (auth.uid() = user_id OR EXISTS(SELECT 1 FROM users WHERE users.id = auth.uid() AND users.is_admin = true));
+
+CREATE POLICY "Reviews: public select" ON reviews FOR SELECT USING (true);
+
+CREATE POLICY "Reviews: insert own" ON reviews FOR INSERT
+TO authenticated
+WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Reviews: user manage own" ON reviews FOR UPDATE, DELETE
+TO authenticated
+USING (auth.uid() = user_id)
+WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Reviews: admins delete" ON reviews FOR DELETE
+TO authenticated
+USING (EXISTS (SELECT 1 FROM users WHERE users.id = auth.uid() AND users.is_admin = true));
+
+
+Important: The README must explain that FOR INSERT policies require WITH CHECK (Postgres rule) — this prevents the only WITH CHECK expression allowed for INSERT syntax error we saw.
+
+README — “Possible Errors & Fixes” (must be included, exact language)
+
+Add a dedicated section Possible Errors & Fixes containing the issues we encountered and how to resolve them. Include the exact error strings and fixes:
+
+Error: 401: {"error":"Unauthorized"}
+
+Cause: request missing a valid Supabase session token or token not sent in Authorization header.
+
+Fix: Ensure frontend sends Authorization: Bearer <access_token> header when calling /api/admin/*. Server should call supabase.auth.getUser(token) to validate.
+
+Error: new row violates row-level security policy for table "users" (500)
+
+Cause: Attempting to insert into users during signup before auth.uid() exists or RLS blocks insert.
+
+Fix: Either allow insert on users temporarily with WITH CHECK (true) or upsert the profile after authentication. Provide code example to upsert after login:
+
+const { data: { user } } = await supabase.auth.getUser(token);
+await supabase.from('users').upsert({ id: user.id, email: user.email, username: user.user_metadata.username });
+
+
+Error: 42601: only WITH CHECK expression allowed for INSERT
+
+Cause: Using USING (...) in an INSERT policy (syntax error).
+
+Fix: Use WITH CHECK (...) for INSERT policies — include exact SQL examples in README (see RLS section above).
+
+Error: 42601: syntax error at or near "const"
+
+Cause: Attempting to run JavaScript (const, await) inside Supabase SQL editor or psql.
+
+Fix: Run JavaScript in your app (Node/Browser). Use Supabase SQL Editor only for SQL statements.
+
+Error: auth.uid() is null or session appears null
+
+Cause: Session token not passed to server or expired.
+
+Fix: Check supabase.auth.getSession() client-side; forward session.access_token in Authorization header for admin actions.
+
+Include these errors and fixes exactly in README so maintainers can debug quickly.
+
+Admin creation & automated tests (MUST be implemented)
+
+On first server run (or when no admin exists), automatically create a default admin row in public.users and log to console:
+Default admin created: admin@steamfamily.local / admin123 — change password immediately.
+
+Provide a server endpoint /admin/test-login or /api/admin/test-login that:
+
+Accepts the admin token in header
+
+Validates the token server-side
+
+Returns JSON { ok: true, admin: user.email } if admin access works, else error.
+
+README must include exact test steps for the developer to run immediately after deployment:
+
+Register a new user (or use default admin).
+
+Log in and copy access_token from supabase.auth.getSession().
+
+Call /api/admin/test-login with Authorization: Bearer <token> — expect {"ok":true,...}.
+
+Call POST /api/admin/tools with admin token and example payload — expect 201 and the created tool. If 401 or RLS violation occurs, README instructs to check tokens and RLS SQL policies (include the above fixes).
+
+Provide example curl for tests:
+
+# test admin login
+curl -H "Authorization: Bearer <ADMIN_TOKEN>" https://<REPL_URL>/api/admin/test-login
+
+# post a tool
+curl -X POST -H "Content-Type: application/json" -H "Authorization: Bearer <ADMIN_TOKEN>" -d '{
+  "title":"Test Tool","slug":"test-tool","short_desc":"test","description_markdown":"## test","images":[""],"tags":["test"],"downloadButtons":[{"label":"Download","url":"https://example.com"}]
+}' https://<REPL_URL>/api/admin/tools
+
+README — Additional sections (must include)
+
+Full Supabase SQL snippets for table creation and RLS (copyable).
+
+How to promote a user to admin (SQL snippet).
+
+How to seed and reset sample data (SQL or script).
+
+How to deploy frontend to GitHub Pages and link with Supabase env vars.
+
+Troubleshooting checklist matching the "Possible Errors" section.
+
+Deliverables (must be provided)
+
+Full project scaffold (React app + optional minimal serverless functions or Express endpoints to validate admin tokens) ready for Replit & deployable to GitHub Pages for static frontend.
+
+README.md containing all setup, SQL, tests, and Possible Errors & Fixes sections.
+
+Admin UI that is hidden from non-admin users in the UI and enforced server-side.
+
+Admin creation on first run and /api/admin/test-login for verification.
+
+Example seed data and scripts (optional) and instructions to remove.
